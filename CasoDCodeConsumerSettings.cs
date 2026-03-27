@@ -47,9 +47,9 @@ public sealed class CasoDCodeConsumerSettings
             throw new InvalidOperationException("CasoDCodeConsumer.ModelDeploymentName is required.");
         }
 
-        ValidateAgentReference(OrderAgentId, nameof(OrderAgentId));
-        ValidateAgentReference(RefundAgentId, nameof(RefundAgentId));
-        ValidateAgentReference(ClarifierAgentId, nameof(ClarifierAgentId));
+        ValidateRequiredValue(OrderAgentId, nameof(OrderAgentId));
+        ValidateRequiredValue(RefundAgentId, nameof(RefundAgentId));
+        ValidateRequiredValue(ClarifierAgentId, nameof(ClarifierAgentId));
 
         if (ResponsesTimeoutSeconds <= 0)
         {
@@ -64,18 +64,11 @@ public sealed class CasoDCodeConsumerSettings
         return uri;
     }
 
-    private static void ValidateAgentReference(string configuredAgentId, string settingName)
+    private static void ValidateRequiredValue(string value, string settingName)
     {
-        if (string.IsNullOrWhiteSpace(configuredAgentId))
+        if (string.IsNullOrWhiteSpace(value))
         {
             throw new InvalidOperationException($"CasoDCodeConsumer.{settingName} is required.");
-        }
-
-        var parts = configuredAgentId.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
-        {
-            throw new InvalidOperationException(
-                $"CasoDCodeConsumer.{settingName} must use the format '<AgentName>:<Version>'.");
         }
     }
 }

@@ -87,7 +87,13 @@ app.MapPost("/orchestrate", async (OrchestrateRequest? request, CancellationToke
 
         var execution = decision.RouteKind switch
         {
-            RouteKind.Order => await RunOrderBranchAsync(agentRunner, outputValidators, resolvedAgents.OrderAgent, prompt, cancellationToken),
+            RouteKind.Order => await RunOrderBranchAsync(
+                agentRunner,
+                outputValidators,
+                resolvedAgents.OrderAgent,
+                prompt,
+                decision.OrderId,
+                cancellationToken),
             RouteKind.Refund => await RunRefundBranchAsync(agentRunner, outputValidators, resolvedAgents.RefundAgent, prompt, cancellationToken),
             RouteKind.Clarify => await RunClarifyBranchAsync(agentRunner, outputValidators, intentRouter, resolvedAgents.ClarifierAgent, prompt, decision, cancellationToken),
             RouteKind.Reject => new BranchExecution(BuildRejectResponse(decision)),
@@ -132,10 +138,16 @@ static async Task<BranchExecution> RunOrderBranchAsync(
     OutputValidators outputValidators,
     ResolvedAgentIdentity orderAgent,
     string prompt,
+    string? requestedOrderId,
     CancellationToken cancellationToken)
 {
+    if (string.IsNullOrWhiteSpace(requestedOrderId))
+    {
+        throw new InvalidOperationException("Order route requires a resolved order ID.");
+    }
+
     ConsoleTrace.Agent("Invoking OrderAgent");
-    var rawResponse = await agentRunner.RunAsync(orderAgent, BuildOrderPrompt(prompt), cancellationToken);
+    var rawResponse = await agentRunner.RunAsync(orderAgent, BuildOrderPrompt(prompt, requestedOrderId), cancellationToken);
     var orderResult = outputValidators.ValidateOrderResult(rawResponse);
     return new BranchExecution(null, orderResult, null, null);
 }
@@ -191,7 +203,7 @@ static string BuildFinalResponse(RouteDecision decision, BranchExecution executi
     };
 }
 
-static string BuildOrderPrompt(string prompt)
+static string BuildOrderPrompt(string prompt, string requestedOrderId)
 {
     return string.Format(
         """
@@ -220,12 +232,13 @@ static string BuildOrderPrompt(string prompt)
         - NotFound
 
         If the order is not found, return:
-        {{"id":"<requested-id>","status":"NotFound","requiresAction":false,"reason":"Order not found"}}
+        {{"id":"{1}","status":"NotFound","requiresAction":false,"reason":"Order not found"}}
 
         User request:
         {0}
         """,
-        prompt);
+        prompt,
+        requestedOrderId);
 }
 
 static string BuildOrderResponse(OrderResult orderResult)

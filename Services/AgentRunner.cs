@@ -25,7 +25,7 @@ public sealed class AgentRunner
             new ProjectConversationCreationOptions(),
             cancellationToken);
 
-        var agentReference = new AgentReference(agent.ResponseClientAgentName, agent.AgentVersion);
+        var agentReference = new AgentReference(agent.AgentName, agent.AgentVersion);
         var responsesClient = _projectClient.OpenAI.GetProjectResponsesClientForAgent(agentReference, conversation.Value.Id);
 
         var response = await responsesClient.CreateResponseAsync(

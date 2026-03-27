@@ -45,25 +45,43 @@ public sealed class AgentValidationService
             throw new InvalidOperationException($"{logicalAgentName} must not be empty.");
         }
 
-        var parts = configuredAgentId.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+        var resolvedAgent = await ResolveAgentVersionByIdAsync(configuredAgentId, cancellationToken);
+        if (resolvedAgent is null)
         {
-            throw new InvalidOperationException($"{logicalAgentName} must use the format '<AgentName>:<Version>'.");
+            throw new InvalidOperationException(
+                $"{logicalAgentName} '{configuredAgentId}' was not found or is not accessible in the configured Foundry project.");
         }
 
-        var agentVersion = await _projectClient.Agents.GetAgentVersionAsync(
-            agentName: parts[0],
-            agentVersion: parts[1],
-            cancellationToken: cancellationToken);
-
         _ = _projectClient.OpenAI.GetProjectResponsesClientForAgent(
-            new AgentReference(agentVersion.Value.Name, agentVersion.Value.Version),
+            new AgentReference(resolvedAgent.AgentName, resolvedAgent.AgentVersion),
             null);
 
-        return new ResolvedAgentIdentity(
-            AgentId: agentVersion.Value.Id,
-            AgentName: agentVersion.Value.Name,
-            AgentVersion: agentVersion.Value.Version,
-            ResponseClientAgentName: agentVersion.Value.Name);
+        return resolvedAgent;
+    }
+
+    private async Task<ResolvedAgentIdentity?> ResolveAgentVersionByIdAsync(
+        string configuredAgentId,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var agent in _projectClient.Agents.GetAgentsAsync(limit: 100, cancellationToken: cancellationToken))
+        {
+            await foreach (var agentVersion in _projectClient.Agents.GetAgentVersionsAsync(
+                               agent.Name,
+                               limit: 100,
+                               cancellationToken: cancellationToken))
+            {
+                if (!string.Equals(agentVersion.Id, configuredAgentId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return new ResolvedAgentIdentity(
+                    AgentId: agentVersion.Id,
+                    AgentName: agentVersion.Name,
+                    AgentVersion: agentVersion.Version);
+            }
+        }
+
+        return null;
     }
 }

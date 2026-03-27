@@ -34,6 +34,8 @@ Run the equivalent bootstrap repo first so that these agents already exist in Fo
 
 `RefundAgent` and `ClarifierAgent` must already be prepared before this API starts.
 
+The configured values for `OrderAgentId`, `RefundAgentId`, and `ClarifierAgentId` must be Foundry agent version IDs produced by that bootstrap flow.
+
 ## Code-first runtime
 
 - `IntentRouter` decides the route in code
@@ -53,9 +55,9 @@ Configure `appsettings.json` like this:
   "CasoDCodeConsumer": {
     "ProjectEndpoint": "https://<resource>.services.ai.azure.com/api/projects/<project>",
     "ModelDeploymentName": "<deployment-name>",
-    "OrderAgentId": "OrderAgent:5",
-    "RefundAgentId": "refund-agent-casedcodeconsumer:3",
-    "ClarifierAgentId": "clarifier-agent-casedcodeconsumer:2",
+    "OrderAgentId": "<order-agent-version-id>",
+    "RefundAgentId": "<refund-agent-version-id>",
+    "ClarifierAgentId": "<clarifier-agent-version-id>",
     "ResponsesTimeoutSeconds": 60,
     "ResponsesMaxBackoffSeconds": 8
   }
@@ -67,7 +69,7 @@ Requirements:
 - `ProjectEndpoint` must be HTTPS and contain `/api/projects/`
 - `ModelDeploymentName` is required
 - `OrderAgentId`, `RefundAgentId`, and `ClarifierAgentId` are required
-- Each agent reference must use the format `AgentName:Version`
+- Each agent reference must be an existing Foundry agent version ID
 - Timeout values must be greater than zero
 
 ## Endpoints
@@ -121,9 +123,9 @@ dotnet run
 Sample request:
 
 ```bash
-curl -X POST http://localhost:5183/orchestrate ^
-  -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"Where is order ORD-000123?\"}"
+curl -X POST http://localhost:5183/orchestrate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Where is order ORD-000123?"}'
 ```
 
 ## Example prompts
@@ -136,6 +138,7 @@ curl -X POST http://localhost:5183/orchestrate ^
 ## Operational notes
 
 - Startup logs report bootstrap validation start and completion
-- Startup logs confirm order, refund, and clarifier agent validation
+- Startup logs confirm order, refund, and clarifier agent validation against existing Foundry agents
 - Runtime logs report request receipt, routing completion, and request failure
 - Agent output is validated strictly with `System.Text.Json`
+- Startup does not create agents, reconcile agents, or publish new versions
