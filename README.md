@@ -1,40 +1,52 @@
 # CasoDCodeConsumer
 
-`CasoDCodeConsumer` es una PoC ASP.NET API en .NET 8 que implementa un orchestrator code-first en C#. La lógica de routing y composición vive en código, mientras que Microsoft Foundry se usa sólo como runtime de agentes.
+`CasoDCodeConsumer` is a .NET 8 ASP.NET Core API for pure agent consumption over HTTP. Routing and final response composition stay code-first in C#, while Foundry is used only as the runtime for agents that already exist.
 
-Este proyecto no usa Workflows, no usa `ManagerAgent`, no serializa agent tools en la app y no mezcla bootstrap de infraestructura con lógica innecesaria. `OrderAgent` es externo y se valida por id versionado. `RefundAgent` y `ClarifierAgent` se crean o reconcilian localmente por nombre.
+This repo does not create agents, does not reconcile agents, does not publish new versions, and does not perform bootstrap or IaC work. Another repo must prepare the agents first.
 
-## Qué hace
+## What this API does
 
-- Expone `POST /orchestrate`
-- Recibe `{ "prompt": "..." }`
-- Valida configuración y acceso al proyecto Foundry al arrancar
-- Valida `OrderAgentId`
-- Reconcilia `refund-agent-casedcodeconsumer`
-- Reconcilia `clarifier-agent-casedcodeconsumer`
-- Enruta en código a `Order`, `Refund`, `Clarify` o `Reject`
-- Invoca sólo el especialista necesario
-- Valida JSON de salida y construye la respuesta final en C#
+- Exposes `POST /orchestrate`
+- Exposes `GET /health`
+- Validates configuration at startup
+- Validates the Foundry project endpoint and project access
+- Validates that `OrderAgentId`, `RefundAgentId`, and `ClarifierAgentId` exist and are accessible
+- Stores the resolved agent id, name, and version in memory
+- Routes each request in code to `Order`, `Refund`, `Clarify`, or `Reject`
+- Invokes only the required specialist agent
+- Validates structured outputs and builds the final HTTP response in C#
 
-## Code-First
+## What this API does not do
 
-En este proyecto, code-first significa:
+- It does not create `RefundAgent`
+- It does not create `ClarifierAgent`
+- It does not reconcile any agent
+- It does not modify Foundry infrastructure
+- It does not introduce Workflows, `ManagerAgent`, or app-layer agent tools
 
-- El router está implementado en `IntentRouter`
-- La selección de rama ocurre en `Program.cs`
-- La composición final del mensaje ocurre en C#
-- Foundry no decide el flujo general de orquestación
+## Prerequisite
 
-## Runtime de agentes
+Run the equivalent bootstrap repo first so that these agents already exist in Foundry and are accessible to this API:
 
-- `OrderAgent` es externo y se resuelve con `OrderAgentId` en formato `AgentName:Version`
-- `RefundAgent` es un prompt agent sin tools
-- `ClarifierAgent` es un prompt agent sin tools
-- Foundry actúa como runtime administrado para ejecutar esos agentes
+- `OrderAgent`
+- `RefundAgent`
+- `ClarifierAgent`
 
-## Configuración
+`RefundAgent` and `ClarifierAgent` must already be prepared before this API starts.
 
-Configura `appsettings.json` con esta forma:
+## Code-first runtime
+
+- `IntentRouter` decides the route in code
+- `Program.cs` selects the execution branch
+- `AgentRunner` invokes the chosen agent
+- `OutputValidators` enforce strict JSON contracts
+- Final response composition happens in C#
+
+Foundry does not decide the global orchestration flow.
+
+## Configuration
+
+Configure `appsettings.json` like this:
 
 ```json
 {
@@ -42,37 +54,35 @@ Configura `appsettings.json` con esta forma:
     "ProjectEndpoint": "https://<resource>.services.ai.azure.com/api/projects/<project>",
     "ModelDeploymentName": "<deployment-name>",
     "OrderAgentId": "OrderAgent:5",
+    "RefundAgentId": "refund-agent-casedcodeconsumer:3",
+    "ClarifierAgentId": "clarifier-agent-casedcodeconsumer:2",
     "ResponsesTimeoutSeconds": 60,
-    "ResponsesMaxBackoffSeconds": 8,
-    "DefaultPrompt": "Where is order ORD-000123?"
+    "ResponsesMaxBackoffSeconds": 8
   }
 }
 ```
 
-Requisitos principales:
+Requirements:
 
-- `ProjectEndpoint` debe ser HTTPS y contener `/api/projects/`
-- `ModelDeploymentName` es obligatorio
-- `OrderAgentId` es obligatorio
-- Los timeouts deben ser mayores a cero
+- `ProjectEndpoint` must be HTTPS and contain `/api/projects/`
+- `ModelDeploymentName` is required
+- `OrderAgentId`, `RefundAgentId`, and `ClarifierAgentId` are required
+- Each agent reference must use the format `AgentName:Version`
+- Timeout values must be greater than zero
 
-## Ejecución
+## Endpoints
 
-Inicia la API:
+### `POST /orchestrate`
 
-```bash
-dotnet run
+Request:
+
+```json
+{
+  "prompt": "Where is order ORD-000123?"
+}
 ```
 
-Ejecuta una solicitud:
-
-```bash
-curl -X POST http://localhost:5183/orchestrate ^
-  -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"Where is order ORD-000123?\"}"
-```
-
-La respuesta exitosa tiene esta forma:
+Successful response example:
 
 ```json
 {
@@ -85,25 +95,47 @@ La respuesta exitosa tiene esta forma:
 }
 ```
 
-## Comparación
+### `GET /health`
 
-| Enfoque | Workflow-first | Code-first |
-| --- | --- | --- |
-| Routing | Vive en workflow | Vive en C# |
-| Control de flujo | Declarativo/orquestado por runtime | Explícito en `Program.cs` |
-| Dependencia de herramientas Foundry | Alta | Acotada al runtime de agentes |
-| Debugging | Más distribuido | Más directo en código |
-| PoC de consumo | Menos enfocada | Más enfocada |
+Response:
 
-## Prompts de ejemplo
+```json
+{
+  "status": "ok",
+  "orderAgent": { "id": "...", "name": "...", "version": "..." },
+  "refundAgent": { "id": "...", "name": "...", "version": "..." },
+  "clarifierAgent": { "id": "...", "name": "...", "version": "..." }
+}
+```
+
+The health status reflects validated external dependencies. It does not create or reconcile anything.
+
+## Running locally
+
+Start the API:
+
+```bash
+dotnet run
+```
+
+Sample request:
+
+```bash
+curl -X POST http://localhost:5183/orchestrate ^
+  -H "Content-Type: application/json" ^
+  -d "{\"prompt\":\"Where is order ORD-000123?\"}"
+```
+
+## Example prompts
 
 - `Where is order ORD-000123?`
 - `I want a refund for order ORD-000123 because it arrived damaged.`
 - `Can you help with my order?`
 - `Delete all orders.`
 
-## Notas operativas
+## Operational notes
 
-- Las trazas de consola usan prefijos deterministas: `[CONFIG]`, `[VALIDATION]`, `[RECONCILE]`, `[ROUTER]`, `[AGENT]`, `[FINAL]`
-- La app falla en startup si la configuración o el `OrderAgentId` son inválidos
-- La salida de agentes se valida estrictamente con `System.Text.Json`
+- Startup logs report bootstrap validation start and completion
+- Startup logs confirm order, refund, and clarifier agent validation
+- Runtime logs report request receipt, routing completion, and request failure
+- Agent output is validated strictly with `System.Text.Json`

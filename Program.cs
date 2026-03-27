@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.Identity;
 using CasoDCodeConsumer;
-using CasoDCodeConsumer.Agents;
 using CasoDCodeConsumer.Models;
 using CasoDCodeConsumer.Services;
 using Microsoft.AspNetCore.Builder;
@@ -21,8 +20,10 @@ builder.Configuration
 
 var settingsSection = builder.Configuration.GetSection(CasoDCodeConsumerSettings.SectionName);
 var settings = settingsSection.Get<CasoDCodeConsumerSettings>() ?? new CasoDCodeConsumerSettings();
+
+ConsoleTrace.Bootstrap("bootstrap validation started");
 var projectEndpoint = settings.GetValidatedProjectEndpointUri();
-ConsoleTrace.Config("Endpoint validated");
+ConsoleTrace.Validation("foundry endpoint validated");
 
 var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
 {
@@ -31,36 +32,50 @@ var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
 
 var projectClient = new AIProjectClient(projectEndpoint, credential);
 var agentValidationService = new AgentValidationService(projectClient);
-var agentReconciler = new AgentReconciler(projectClient);
 var agentRunner = new AgentRunner(projectClient, settings);
 var orderIdExtractor = new OrderIdExtractor();
 var intentRouter = new IntentRouter(orderIdExtractor);
 var outputValidators = new OutputValidators();
 
 await agentValidationService.ValidateProjectAccessAsync(CancellationToken.None);
-ConsoleTrace.Validation("Project access validated");
+ConsoleTrace.Validation("project access validated");
 
-var orderAgent = await agentValidationService.ValidateExternalOrderAgentAsync(settings.OrderAgentId, CancellationToken.None);
-ConsoleTrace.Validation("OrderAgent validated");
-
-var refundReconcile = await agentReconciler.ReconcileAsync(
-    AgentNames.RefundAgent,
-    RefundAgentFactory.Create(settings.ModelDeploymentName),
+var orderAgent = await agentValidationService.ValidateConfiguredAgentAsync(
+    nameof(CasoDCodeConsumerSettings.OrderAgentId),
+    settings.OrderAgentId,
     CancellationToken.None);
-ConsoleTrace.Reconcile($"{AgentNames.RefundAgent} => {refundReconcile.Action}");
+ConsoleTrace.Validation("order agent validated");
 
-var clarifierReconcile = await agentReconciler.ReconcileAsync(
-    AgentNames.ClarifierAgent,
-    ClarifierAgentFactory.Create(settings.ModelDeploymentName),
+var refundAgent = await agentValidationService.ValidateConfiguredAgentAsync(
+    nameof(CasoDCodeConsumerSettings.RefundAgentId),
+    settings.RefundAgentId,
     CancellationToken.None);
-ConsoleTrace.Reconcile($"{AgentNames.ClarifierAgent} => {clarifierReconcile.Action}");
+ConsoleTrace.Validation("refund agent validated");
+
+var clarifierAgent = await agentValidationService.ValidateConfiguredAgentAsync(
+    nameof(CasoDCodeConsumerSettings.ClarifierAgentId),
+    settings.ClarifierAgentId,
+    CancellationToken.None);
+ConsoleTrace.Validation("clarifier agent validated");
+
+var resolvedAgents = new ResolvedAgentsState(orderAgent, refundAgent, clarifierAgent);
+ConsoleTrace.Bootstrap("bootstrap validation completed");
 
 var app = builder.Build();
 
+app.MapGet("/health", () => Results.Ok(new HealthResponse(
+    "ok",
+    ToHealthAgentMetadata(resolvedAgents.OrderAgent),
+    ToHealthAgentMetadata(resolvedAgents.RefundAgent),
+    ToHealthAgentMetadata(resolvedAgents.ClarifierAgent))));
+
 app.MapPost("/orchestrate", async (OrchestrateRequest? request, CancellationToken cancellationToken) =>
 {
+    ConsoleTrace.Request("request received");
+
     if (request is null || string.IsNullOrWhiteSpace(request.Prompt))
     {
+        ConsoleTrace.Failure("request failed: prompt is required.");
         return Results.BadRequest(new { error = "Prompt is required." });
     }
 
@@ -68,19 +83,19 @@ app.MapPost("/orchestrate", async (OrchestrateRequest? request, CancellationToke
     {
         var prompt = request.Prompt.Trim();
         var decision = RoutePrompt(intentRouter, prompt);
-        ConsoleTrace.Router($"Route selected: {decision.RouteKind}");
+        ConsoleTrace.Router($"routing completed: {decision.RouteKind}");
 
         var execution = decision.RouteKind switch
         {
-            RouteKind.Order => await RunOrderBranchAsync(agentRunner, outputValidators, orderAgent, prompt, cancellationToken),
-            RouteKind.Refund => await RunRefundBranchAsync(agentRunner, outputValidators, refundReconcile.Identity, prompt, cancellationToken),
-            RouteKind.Clarify => await RunClarifyBranchAsync(agentRunner, outputValidators, intentRouter, clarifierReconcile.Identity, prompt, decision, cancellationToken),
+            RouteKind.Order => await RunOrderBranchAsync(agentRunner, outputValidators, resolvedAgents.OrderAgent, prompt, cancellationToken),
+            RouteKind.Refund => await RunRefundBranchAsync(agentRunner, outputValidators, resolvedAgents.RefundAgent, prompt, cancellationToken),
+            RouteKind.Clarify => await RunClarifyBranchAsync(agentRunner, outputValidators, intentRouter, resolvedAgents.ClarifierAgent, prompt, decision, cancellationToken),
             RouteKind.Reject => new BranchExecution(BuildRejectResponse(decision)),
             _ => throw new InvalidOperationException($"Unsupported route: {decision.RouteKind}")
         };
 
         var finalResponse = BuildFinalResponse(decision, execution);
-        ConsoleTrace.Final("Response built successfully");
+        ConsoleTrace.Final("response built successfully");
 
         return Results.Ok(new OrchestrateResponse(
             Prompt: prompt,
@@ -92,7 +107,7 @@ app.MapPost("/orchestrate", async (OrchestrateRequest? request, CancellationToke
     }
     catch (Exception exception)
     {
-        ConsoleTrace.Final($"Request failed: {exception.Message}");
+        ConsoleTrace.Failure($"request failed: {exception.Message}");
         return Results.Problem(
             title: "Orchestration failed",
             detail: exception.Message,
@@ -105,6 +120,11 @@ app.Run();
 static RouteDecision RoutePrompt(IntentRouter router, string prompt)
 {
     return router.Route(prompt);
+}
+
+static HealthAgentMetadata ToHealthAgentMetadata(ResolvedAgentIdentity agent)
+{
+    return new HealthAgentMetadata(agent.AgentId, agent.AgentName, agent.AgentVersion);
 }
 
 static async Task<BranchExecution> RunOrderBranchAsync(
@@ -258,6 +278,14 @@ internal sealed record OrchestrateResponse(
     string? OrderId,
     string? RefundReason,
     string Reason);
+
+internal sealed record HealthResponse(
+    string Status,
+    HealthAgentMetadata OrderAgent,
+    HealthAgentMetadata RefundAgent,
+    HealthAgentMetadata ClarifierAgent);
+
+internal sealed record HealthAgentMetadata(string Id, string Name, string Version);
 
 internal sealed record BranchExecution(
     string? RejectResponse,

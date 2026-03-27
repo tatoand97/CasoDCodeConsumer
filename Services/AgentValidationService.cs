@@ -30,17 +30,25 @@ public sealed class AgentValidationService
         }
     }
 
-    public async Task<ResolvedAgentIdentity> ValidateExternalOrderAgentAsync(string configuredOrderAgentId, CancellationToken cancellationToken)
+    public async Task<ResolvedAgentIdentity> ValidateConfiguredAgentAsync(
+        string logicalAgentName,
+        string configuredAgentId,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(configuredOrderAgentId))
+        if (string.IsNullOrWhiteSpace(logicalAgentName))
         {
-            throw new InvalidOperationException("OrderAgentId must not be empty.");
+            throw new InvalidOperationException("Logical agent name must not be empty.");
         }
 
-        var parts = configuredOrderAgentId.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (string.IsNullOrWhiteSpace(configuredAgentId))
+        {
+            throw new InvalidOperationException($"{logicalAgentName} must not be empty.");
+        }
+
+        var parts = configuredAgentId.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
         {
-            throw new InvalidOperationException("OrderAgentId must use the format '<AgentName>:<Version>'.");
+            throw new InvalidOperationException($"{logicalAgentName} must use the format '<AgentName>:<Version>'.");
         }
 
         var agentVersion = await _projectClient.Agents.GetAgentVersionAsync(
@@ -48,7 +56,9 @@ public sealed class AgentValidationService
             agentVersion: parts[1],
             cancellationToken: cancellationToken);
 
-        _ = _projectClient.OpenAI.GetProjectResponsesClientForAgent(new AgentReference(agentVersion.Value.Name, agentVersion.Value.Version), null);
+        _ = _projectClient.OpenAI.GetProjectResponsesClientForAgent(
+            new AgentReference(agentVersion.Value.Name, agentVersion.Value.Version),
+            null);
 
         return new ResolvedAgentIdentity(
             AgentId: agentVersion.Value.Id,

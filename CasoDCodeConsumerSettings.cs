@@ -12,11 +12,13 @@ public sealed class CasoDCodeConsumerSettings
 
     public string OrderAgentId { get; set; } = string.Empty;
 
+    public string RefundAgentId { get; set; } = string.Empty;
+
+    public string ClarifierAgentId { get; set; } = string.Empty;
+
     public int ResponsesTimeoutSeconds { get; set; } = 60;
 
     public int ResponsesMaxBackoffSeconds { get; set; } = 8;
-
-    public string DefaultPrompt { get; set; } = "Where is order ORD-000123?";
 
     public Uri GetValidatedProjectEndpointUri()
     {
@@ -45,10 +47,9 @@ public sealed class CasoDCodeConsumerSettings
             throw new InvalidOperationException("CasoDCodeConsumer.ModelDeploymentName is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(OrderAgentId))
-        {
-            throw new InvalidOperationException("CasoDCodeConsumer.OrderAgentId is required.");
-        }
+        ValidateAgentReference(OrderAgentId, nameof(OrderAgentId));
+        ValidateAgentReference(RefundAgentId, nameof(RefundAgentId));
+        ValidateAgentReference(ClarifierAgentId, nameof(ClarifierAgentId));
 
         if (ResponsesTimeoutSeconds <= 0)
         {
@@ -61,5 +62,20 @@ public sealed class CasoDCodeConsumerSettings
         }
 
         return uri;
+    }
+
+    private static void ValidateAgentReference(string configuredAgentId, string settingName)
+    {
+        if (string.IsNullOrWhiteSpace(configuredAgentId))
+        {
+            throw new InvalidOperationException($"CasoDCodeConsumer.{settingName} is required.");
+        }
+
+        var parts = configuredAgentId.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            throw new InvalidOperationException(
+                $"CasoDCodeConsumer.{settingName} must use the format '<AgentName>:<Version>'.");
+        }
     }
 }
